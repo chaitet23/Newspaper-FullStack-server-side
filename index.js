@@ -181,9 +181,8 @@ app.get('/tags', async (req, res) => {
 
         const tags = await articlesCollection.distinct("tags", { status: 'approved' });
 
-        // Safely flatten & filter out null/undefined
         const normalizedTags = tags
-            .filter(Boolean) // null / undefined / empty remove
+            .filter(Boolean)
             .flatMap(tag => Array.isArray(tag) ? tag : [tag]);
 
         const uniqueTags = [...new Set(normalizedTags)];
@@ -193,21 +192,52 @@ app.get('/tags', async (req, res) => {
         res.status(500).send({ message: error.message });
     }
 });
-app.get('/articles/trending', async (req, res) => {
+// ================== ARTICLE DETAILS ROUTE ================== //
+app.get('/articles/:id', async (req, res) => {
     try {
-        if (!articlesCollection) {
-            return res.status(500).send({ message: "Database not initialized yet" });
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: "Invalid article ID" });
         }
 
-        const articles = await articlesCollection.find({ status: 'approved' })
-            .sort({ views: -1 })
-            .limit(6)
-            .toArray();
-        res.send(articles);
+        const article = await articlesCollection.findOne({
+            _id: new ObjectId(id),
+            status: 'approved'
+        });
+
+        if (!article) {
+            return res.status(404).send({ message: "Article not found" });
+        }
+
+
+        await articlesCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $inc: { views: 1 } }
+        );
+
+        res.send(article);
+
     } catch (error) {
+        console.error('Article details error:', error);
         res.status(500).send({ message: error.message });
     }
 });
+// app.get('/articles/trending', async (req, res) => {
+//     try {
+//         if (!articlesCollection) {
+//             return res.status(500).send({ message: "Database not initialized yet" });
+//         }
+
+//         const articles = await articlesCollection.find({ status: 'approved' })
+//             .sort({ views: -1 })
+//             .limit(6)
+//             .toArray();
+//         res.send(articles);
+//     } catch (error) {
+//         res.status(500).send({ message: error.message });
+//     }
+// });
 
 
 
