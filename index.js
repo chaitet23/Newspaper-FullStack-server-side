@@ -1,15 +1,18 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const admin = require("firebase-admin");
+
 // Load environment variables from .env file
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+
 // Initialize Firebase Admin SDK
 const decodedKey = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString('utf8');
 const serviceAccount = JSON.parse(decodedKey);
@@ -24,10 +27,12 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 const client = new MongoClient(uri, {
     serverApi: {
         version: ServerApiVersion.v1,
-        strict: true,
+        strict: false,
         deprecationErrors: true,
     }
 });
+
+let articlesCollection, usersCollection, publishersCollection;
 
 async function verifyFirebaseToken(req, res, next) {
     const authHeader = req.headers?.authorization;
@@ -46,17 +51,163 @@ async function verifyFirebaseToken(req, res, next) {
 
 async function run() {
     try {
-        // Connect the client to the server	(optional starting in v4.7)
+        // Connect the client to the server
         // await client.connect();
+
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
-    } finally {
-        // Ensures that the client will close when you finish/error
-        // await client.close();
+
+        // Initialize collections (GLOBAL)
+        const db = client.db("newspaperDB");
+        articlesCollection = db.collection("articles");
+        usersCollection = db.collection("users");
+        publishersCollection = db.collection("publishers");
+
+
+    } catch (error) {
+        console.error("Error connecting to MongoDB:", error);
     }
 }
 run().catch(console.dir);
+
+// ================== ARTICLE ROUTES ================== //
+
+// Backend route for filtered articles
+app.get('/articles', async (req, res) => {
+    try {
+        let query = { status: 'approved' };
+
+        // Search by title
+        if (req.query.search) {
+            query.title = { $regex: req.query.search, $options: 'i' };
+        }
+
+        // Filter by publisher
+        if (req.query.publisher) {
+            query.publisher = req.query.publisher;
+        }
+
+        // Filter by tags
+        if (req.query.tags) {
+            const tagsArray = req.query.tags.split(',');
+            query.tags = { $in: tagsArray };
+        }
+
+        const articles = await articlesCollection.find(query).toArray();
+        res.send(articles);
+    } catch (error) {
+        res.status(500).send({ message: error.message });
+    }
+});
+
+// Add a new endpoint to get all unique publishers for filter dropdown
+app.get('/publishers', async (req, res) => {
+    try {
+        if (!articlesCollection) {
+            return res.status(500).send({ message: "Database not initialized yet" });
+        }
+
+        const publishers = await articlesCollection.distinct("publisher", { status: 'approved' });
+        res.send(publishers);
+    } catch (error) {
+        res.status(500).send({ message: error.message });
+    }
+});
+
+// Add a new endpoint to get all unique tags for filter dropdown
+// app.get('/tags', async (req, res) => {
+//     try {
+//         if (!articlesCollection) {
+//             return res.status(500).send({ message: "Database not initialized yet" });
+//         }
+
+//         const tags = await articlesCollection.distinct("tags", { status: 'approved' });
+//         // Flatten the array of arrays and remove duplicates
+//         const uniqueTags = [...new Set(tags.flat())];
+//         res.send(uniqueTags);
+//     } catch (error) {
+//         res.status(500).send({ message: error.message });
+//     }
+// });
+// app.get('/tags', async (req, res) => {
+//     try {
+//         if (!articlesCollection) {
+//             return res.status(500).send({ message: "Database not initialized yet" });
+//         }
+
+//         // Fetch all unique tags from approved articles
+//         const tags = await articlesCollection.distinct("tags", { status: 'approved' });
+
+//         // Remove duplicates (if any)
+//         const uniqueTags = [...new Set(tags)];
+
+//         res.send(uniqueTags);
+//     } catch (error) {
+//         res.status(500).send({ message: error.message });
+//     }
+// });
+
+// Get trending articles (most viewed) - Top 6
+
+// app.get('/tags', async (req, res) => {
+//     try {
+//         if (!articlesCollection) {
+//             return res.status(500).send({ message: "Database not initialized yet" });
+//         }
+
+//         // Ei line change koro
+//         const tags = await articlesCollection.distinct("tags", {
+//             status: 'approved',
+//             tags: { $exists: true, $ne: [] } // Empty tags avoid korar jonno
+//         });
+
+//         console.log('Tags from DB:', tags); // Check korbe data ase ki na
+
+//         // Remove duplicates
+//         const uniqueTags = [...new Set(tags.flat())]; // flat() use koro
+
+//         res.send(uniqueTags);
+//     } catch (error) {
+//         console.error('Tags API error:', error);
+//         res.status(500).send({ message: error.message });
+//     }
+// });
+app.get('/tags', async (req, res) => {
+    try {
+        if (!articlesCollection) {
+            return res.status(500).send({ message: "Database not initialized yet" });
+        }
+
+        const tags = await articlesCollection.distinct("tags", { status: 'approved' });
+
+        // Safely flatten & filter out null/undefined
+        const normalizedTags = tags
+            .filter(Boolean) // null / undefined / empty remove
+            .flatMap(tag => Array.isArray(tag) ? tag : [tag]);
+
+        const uniqueTags = [...new Set(normalizedTags)];
+        res.send(uniqueTags);
+    } catch (error) {
+        console.error("Tags API Error:", error);
+        res.status(500).send({ message: error.message });
+    }
+});
+app.get('/articles/trending', async (req, res) => {
+    try {
+        if (!articlesCollection) {
+            return res.status(500).send({ message: "Database not initialized yet" });
+        }
+
+        const articles = await articlesCollection.find({ status: 'approved' })
+            .sort({ views: -1 })
+            .limit(6)
+            .toArray();
+        res.send(articles);
+    } catch (error) {
+        res.status(500).send({ message: error.message });
+    }
+});
 
 
 
@@ -67,5 +218,5 @@ app.get('/', (req, res) => {
 
 // Start the server
 app.listen(port, () => {
-    console.log(` Server is up and running on port ${port}`);
+    console.log(`Server is up and running on port ${port}`);
 });
