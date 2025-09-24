@@ -115,64 +115,6 @@ app.get('/publishers', async (req, res) => {
     }
 });
 
-// Add a new endpoint to get all unique tags for filter dropdown
-// app.get('/tags', async (req, res) => {
-//     try {
-//         if (!articlesCollection) {
-//             return res.status(500).send({ message: "Database not initialized yet" });
-//         }
-
-//         const tags = await articlesCollection.distinct("tags", { status: 'approved' });
-//         // Flatten the array of arrays and remove duplicates
-//         const uniqueTags = [...new Set(tags.flat())];
-//         res.send(uniqueTags);
-//     } catch (error) {
-//         res.status(500).send({ message: error.message });
-//     }
-// });
-// app.get('/tags', async (req, res) => {
-//     try {
-//         if (!articlesCollection) {
-//             return res.status(500).send({ message: "Database not initialized yet" });
-//         }
-
-//         // Fetch all unique tags from approved articles
-//         const tags = await articlesCollection.distinct("tags", { status: 'approved' });
-
-//         // Remove duplicates (if any)
-//         const uniqueTags = [...new Set(tags)];
-
-//         res.send(uniqueTags);
-//     } catch (error) {
-//         res.status(500).send({ message: error.message });
-//     }
-// });
-
-// Get trending articles (most viewed) - Top 6
-
-// app.get('/tags', async (req, res) => {
-//     try {
-//         if (!articlesCollection) {
-//             return res.status(500).send({ message: "Database not initialized yet" });
-//         }
-
-//         // Ei line change koro
-//         const tags = await articlesCollection.distinct("tags", {
-//             status: 'approved',
-//             tags: { $exists: true, $ne: [] } // Empty tags avoid korar jonno
-//         });
-
-//         console.log('Tags from DB:', tags); // Check korbe data ase ki na
-
-//         // Remove duplicates
-//         const uniqueTags = [...new Set(tags.flat())]; // flat() use koro
-
-//         res.send(uniqueTags);
-//     } catch (error) {
-//         console.error('Tags API error:', error);
-//         res.status(500).send({ message: error.message });
-//     }
-// });
 app.get('/tags', async (req, res) => {
     try {
         if (!articlesCollection) {
@@ -192,6 +134,8 @@ app.get('/tags', async (req, res) => {
         res.status(500).send({ message: error.message });
     }
 });
+
+
 // ================== ARTICLE DETAILS ROUTE ================== //
 app.get('/articles/:id', async (req, res) => {
     try {
@@ -214,12 +158,158 @@ app.get('/articles/:id', async (req, res) => {
         await articlesCollection.updateOne(
             { _id: new ObjectId(id) },
             { $inc: { views: 1 } }
-        );
+        )
 
         res.send(article);
 
     } catch (error) {
         console.error('Article details error:', error);
+        res.status(500).send({ message: error.message });
+    }
+});
+// articles  add 
+app.post('/articles', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { title, image, publisher, tags, description } = req.body;
+
+        // Validation
+        if (!title || !image || !publisher || !tags || !description) {
+            return res.status(400).send({ message: "All fields are required" });
+        }
+
+        const article = {
+            title,
+            image,
+            publisher,
+            tags: Array.isArray(tags) ? tags : [tags],
+            description,
+            status: 'pending', // Admin approve korbe
+            author: req.user.email,
+            authorId: req.user.uid,
+            createdAt: new Date(),
+            views: 0,
+            isPremium: false
+        };
+
+        const result = await articlesCollection.insertOne(article);
+        res.status(201).send({
+            message: "Article submitted successfully! Waiting for admin approval.",
+            articleId: result.insertedId
+        });
+
+    } catch (error) {
+        res.status(500).send({ message: error.message });
+    }
+});
+
+// Get user's articles with decline reason
+app.get('/my-articles', verifyFirebaseToken, async (req, res) => {
+    try {
+        const articles = await articlesCollection.find({
+            authorId: req.user.uid
+        }).sort({ createdAt: -1 }).toArray();
+
+        res.send(articles);
+    } catch (error) {
+        res.status(500).send({ message: error.message });
+    }
+});
+
+// Delete article
+app.delete('/article/:id', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: "Invalid article ID" });
+        }
+
+        const article = await articlesCollection.findOne({
+            _id: new ObjectId(id),
+            authorId: req.user.uid
+        });
+
+        if (!article) {
+            return res.status(404).send({ message: "Article not found" });
+        }
+
+        // Only allow delete if article is pending or declined
+        if (article.status === 'approved') {
+            return res.status(400).send({ message: "Cannot delete approved articles" });
+        }
+
+        await articlesCollection.deleteOne({ _id: new ObjectId(id) });
+        res.send({ message: "Article deleted successfully" });
+
+    } catch (error) {
+        res.status(500).send({ message: error.message });
+    }
+});
+
+// Update article
+app.put('/articles/:id', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { title, description, tags } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: "Invalid article ID" });
+        }
+
+        const article = await articlesCollection.findOne({
+            _id: new ObjectId(id),
+            authorId: req.user.uid
+        });
+
+        if (!article) {
+            return res.status(404).send({ message: "Article not found" });
+        }
+
+        // Only allow update if article is pending or declined
+        if (article.status === 'approved') {
+            return res.status(400).send({ message: "Cannot update approved articles" });
+        }
+
+        const updateData = {
+            title,
+            description,
+            tags: Array.isArray(tags) ? tags : [tags],
+            updatedAt: new Date()
+        };
+
+        await articlesCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: updateData }
+        );
+
+        res.send({ message: "Article updated successfully" });
+
+    } catch (error) {
+        res.status(500).send({ message: error.message });
+    }
+});
+
+
+// Get article by ID (details view)
+app.get('/my-article/:id', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).send({ message: "Invalid article ID" });
+        }
+
+        const article = await articlesCollection.findOne({
+            _id: new ObjectId(id),
+            authorId: req.user.uid
+        });
+
+        if (!article) {
+            return res.status(404).send({ message: "Article not found" });
+        }
+
+        res.send(article);
+    } catch (error) {
         res.status(500).send({ message: error.message });
     }
 });
