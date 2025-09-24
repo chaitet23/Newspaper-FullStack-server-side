@@ -72,6 +72,21 @@ async function run() {
 run().catch(console.dir);
 
 // ================== ARTICLE ROUTES ================== //
+app.get('/articles/trending', async (req, res) => {
+    try {
+        if (!articlesCollection) {
+            return res.status(500).send({ message: "Database not initialized yet" });
+        }
+
+        const articles = await articlesCollection.find({ status: 'approved' })
+            .sort({ views: -1 })
+            .limit(6)
+            .toArray();
+        res.send(articles);
+    } catch (error) {
+        res.status(500).send({ message: error.message });
+    }
+});
 
 // Backend route for filtered articles
 app.get('/articles', async (req, res) => {
@@ -313,21 +328,7 @@ app.get('/my-article/:id', verifyFirebaseToken, async (req, res) => {
         res.status(500).send({ message: error.message });
     }
 });
-// app.get('/articles/trending', async (req, res) => {
-//     try {
-//         if (!articlesCollection) {
-//             return res.status(500).send({ message: "Database not initialized yet" });
-//         }
 
-//         const articles = await articlesCollection.find({ status: 'approved' })
-//             .sort({ views: -1 })
-//             .limit(6)
-//             .toArray();
-//         res.send(articles);
-//     } catch (error) {
-//         res.status(500).send({ message: error.message });
-//     }
-// });
 
 
 
