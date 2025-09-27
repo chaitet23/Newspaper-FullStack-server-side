@@ -70,7 +70,164 @@ async function run() {
     }
 }
 run().catch(console.dir);
+// ================== USERS ROUTES ================== //
 
+//  Add or update user (when user registers/login via Firebase)
+app.post('/users', async (req, res) => {
+    try {
+        const { uid, name, email, photoURL } = req.body;
+        if (!uid || !email) {
+            return res.status(400).json({ message: 'UID and email are required' });
+        }
+
+        const existingUser = await usersCollection.findOne({ uid });
+
+        if (existingUser) {
+            // Update existing user info
+            await usersCollection.updateOne(
+                { uid },
+                { $set: { name, email, photoURL } }
+            );
+            return res.status(200).json({ message: 'User updated successfully' });
+        } else {
+            // Add new user
+            const newUser = {
+                uid,
+                name,
+                email,
+                photoURL: photoURL || '',
+                role: 'user',      // default role
+                premiumTaken: null, // for subscription
+                createdAt: new Date()
+            };
+            await usersCollection.insertOne(newUser);
+            return res.status(201).json({ message: 'User created successfully' });
+        }
+    } catch (error) {
+        console.error('Add/Update user error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+// Get all users (for Admin Dashboard )
+app.get('/users', verifyFirebaseToken, async (req, res) => {
+    try {
+        const userEmail = req.query.email;
+
+        if (userEmail) {
+            const user = await usersCollection.findOne({ email: userEmail });
+            if (!user) {
+                return res.status(404).json({ message: 'User not found' });
+            }
+            return res.status(200).json(user);
+        }
+
+        // Multiple users - admin only (for dashboard)
+        const requester = await usersCollection.findOne({ uid: req.user.uid });
+        if (!requester || requester.role !== 'admin') {
+            return res.status(403).json({ message: 'Forbidden: Admins only' });
+        }
+
+        const users = await usersCollection.find().sort({ createdAt: -1 }).toArray();
+        res.status(200).json(users);
+    } catch (error) {
+        console.error('Get users error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Get single user by UID
+app.get('/users/:uid', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { uid } = req.params;
+        if (!uid) return res.status(400).json({ message: "UID is required" });
+
+        const user = await usersCollection.findOne({ uid });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        res.status(200).json(user);
+    } catch (error) {
+        console.error('Get user by UID error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+//  Make admin / update role
+app.put('/users/:id/role', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { role } = req.body;
+
+        // Only admin can update roles
+        const requester = await usersCollection.findOne({ uid: req.user.uid });
+        if (!requester || requester.role !== 'admin') {
+            return res.status(403).json({ message: 'Forbidden: Admins only' });
+        }
+
+        if (!['user', 'admin'].includes(role)) {
+            return res.status(400).json({ message: 'Invalid role' });
+        }
+
+        const result = await usersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { role } }
+        );
+
+        if (result.modifiedCount === 1) {
+            res.status(200).json({ message: `User role updated to ${role}` });
+        } else {
+            res.status(404).json({ message: 'User not found' });
+        }
+    } catch (error) {
+        console.error('Update user role error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+//  NEW: Delete user (Admin only)
+app.delete('/users/:id', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // Check if ID is valid
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Invalid user ID' });
+        }
+
+        // Only admin can delete users
+        const requester = await usersCollection.findOne({ uid: req.user.uid });
+        if (!requester || requester.role !== 'admin') {
+            return res.status(403).json({ message: 'Forbidden: Admins only' });
+        }
+
+        // Check if user exists
+        const userToDelete = await usersCollection.findOne({ _id: new ObjectId(id) });
+        if (!userToDelete) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        // Prevent admin from deleting themselves
+        if (userToDelete.uid === req.user.uid) {
+            return res.status(400).json({ message: 'Cannot delete your own account' });
+        }
+
+        // Delete user from database
+        const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
+
+        if (result.deletedCount === 1) {
+            res.json({
+                message: 'User deleted successfully',
+                deletedUser: {
+                    id: userToDelete._id,
+                    email: userToDelete.email,
+                    name: userToDelete.name
+                }
+            });
+        } else {
+            res.status(404).json({ message: 'User not found' });
+        }
+    } catch (error) {
+        console.error('Delete user error:', error);
+        res.status(500).json({ message: 'Server error while deleting user' });
+    }
+});
 // ================== ARTICLE ROUTES ================== //
 app.get('/articles/trending', async (req, res) => {
     try {
@@ -328,10 +485,6 @@ app.get('/my-article/:id', verifyFirebaseToken, async (req, res) => {
         res.status(500).send({ message: error.message });
     }
 });
-
-
-
-
 // Sample route
 app.get('/', (req, res) => {
     res.send('Newspaper FullStack Server is running smoothly!');
