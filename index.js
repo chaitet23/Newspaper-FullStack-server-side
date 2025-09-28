@@ -434,7 +434,7 @@ app.get('/articles', async (req, res) => {
     }
 });
 // Add a new endpoint to get all unique publishers for filter dropdown
-app.get('/publishers', async (req, res) => {
+app.get('/articles/publishers', async (req, res) => {
     try {
         if (!articlesCollection) {
             return res.status(500).send({ message: "Database not initialized yet" });
