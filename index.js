@@ -154,7 +154,72 @@ app.get('/users', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+// ================== SUBSCRIPTION ROUTE ================== //
+app.post('/subscribe', verifyFirebaseToken, async (req, res) => {
+    try {
+        console.log('Subscribe route hit!'); // Debug line
+        const { plan } = req.body;
+        const userEmail = req.user.email;
 
+        console.log('User:', userEmail, 'Plan:', plan);
+
+        // Calculate expiry date
+        let expiryDate = new Date();
+        if (plan === '1 minute') {
+            expiryDate.setMinutes(expiryDate.getMinutes() + 1);
+        } else if (plan === '5 days') {
+            expiryDate.setDate(expiryDate.getDate() + 5);
+        } else if (plan === '10 days') {
+            expiryDate.setDate(expiryDate.getDate() + 10);
+        }
+
+        // Update user premiumTaken
+        const result = await usersCollection.updateOne(
+            { email: userEmail },
+            { $set: { premiumTaken: expiryDate } }
+        );
+
+        console.log('Update result:', result);
+
+        if (result.modifiedCount === 0) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        res.json({
+            success: true,
+            message: 'Subscription activated successfully',
+            expiryDate: expiryDate
+        });
+    } catch (error) {
+        console.error('Subscription error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// PREMIUM ARTICLES ROUTE
+app.get('/articles/premium', verifyFirebaseToken, async (req, res) => {
+    try {
+        const user = await usersCollection.findOne({ email: req.user.email });
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (!user.premiumTaken || new Date() > new Date(user.premiumTaken)) {
+            return res.status(403).json({ message: 'Premium subscription required' });
+        }
+
+        const articles = await articlesCollection.find({
+            isPremium: true,
+            status: 'approved'
+        }).toArray();
+
+        res.json(articles);
+    } catch (error) {
+        console.error('Premium articles error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
 // Get single user by UID
 app.get('/users/:uid', verifyFirebaseToken, async (req, res) => {
     try {
