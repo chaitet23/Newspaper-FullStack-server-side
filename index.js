@@ -480,7 +480,34 @@ app.get('/publishers', async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+// ================== STATS ROUTE ==================
+app.get('/stats', async (req, res) => {
+    try {
+        const totalUsers = await usersCollection.countDocuments();
 
+        // Normal users: premiumTaken null or expired
+        const normalUsers = await usersCollection.countDocuments({
+            $or: [
+                { premiumTaken: null },
+                { premiumTaken: { $lt: new Date() } }
+            ]
+        });
+
+        // Premium users: premiumTaken valid (not expired)
+        const premiumUsers = await usersCollection.countDocuments({
+            premiumTaken: { $gte: new Date() }
+        });
+
+        res.json({
+            totalUsers,
+            normalUsers,
+            premiumUsers
+        });
+    } catch (error) {
+        console.error('Stats error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
 // ================== ARTICLE ROUTES ================== //
 app.get('/articles/trending', async (req, res) => {
     try {
