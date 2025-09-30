@@ -34,6 +34,16 @@ const client = new MongoClient(uri, {
 
 let articlesCollection, usersCollection, publishersCollection;
 
+// Database connection check middleware
+app.use((req, res, next) => {
+    if (!articlesCollection) {
+        return res.status(503).json({
+            message: "Database is connecting. Please try again in a moment."
+        });
+    }
+    next();
+});
+
 async function verifyFirebaseToken(req, res, next) {
     const authHeader = req.headers?.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -52,7 +62,7 @@ async function verifyFirebaseToken(req, res, next) {
 async function run() {
     try {
         // Connect the client to the server
-        // await client.connect();
+        await client.connect();
 
         // Send a ping to confirm a successful connection
         await client.db("admin").command({ ping: 1 });
@@ -64,12 +74,21 @@ async function run() {
         usersCollection = db.collection("users");
         publishersCollection = db.collection("publishers");
 
+        console.log("Database collections initialized successfully");
+
+        // Start server AFTER database is connected
+        app.listen(port, () => {
+            console.log(`Server is up and running on port ${port}`);
+        });
 
     } catch (error) {
         console.error("Error connecting to MongoDB:", error);
+        process.exit(1); // Exit process if DB connection fails
     }
 }
+
 run().catch(console.dir);
+
 // ================== USERS ROUTES ================== //
 
 //  Add or update user (when user registers/login via Firebase)
@@ -108,6 +127,7 @@ app.post('/users', async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+
 // Get all users (for Admin Dashboard )
 app.get('/users', verifyFirebaseToken, async (req, res) => {
     try {
@@ -150,6 +170,7 @@ app.get('/users/:uid', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+
 //  Make admin / update role
 app.put('/users/:id/role', verifyFirebaseToken, async (req, res) => {
     try {
@@ -181,6 +202,7 @@ app.put('/users/:id/role', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+
 //  NEW: Delete user (Admin only)
 app.delete('/users/:id', verifyFirebaseToken, async (req, res) => {
     try {
@@ -228,6 +250,7 @@ app.delete('/users/:id', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: 'Server error while deleting user' });
     }
 });
+
 // Admin: Get all articles (with pagination + search/filter)
 app.get('/admin/articles', verifyFirebaseToken, async (req, res) => {
     try {
@@ -274,6 +297,7 @@ app.get('/admin/articles', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+
 // Update article status by admin
 app.patch('/admin/articles/:id/status', verifyFirebaseToken, async (req, res) => {
     try {
@@ -321,6 +345,7 @@ app.patch('/admin/articles/:id/status', verifyFirebaseToken, async (req, res) =>
         res.status(500).json({ message: error.message });
     }
 });
+
 // Admin: Delete any article
 app.delete('/admin/articles/:id', verifyFirebaseToken, async (req, res) => {
     try {
@@ -358,6 +383,7 @@ app.delete('/admin/articles/:id', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: "Server error while deleting article" });
     }
 });
+
 //  Add Publisher (Admin Only)
 app.post('/publishers', verifyFirebaseToken, async (req, res) => {
     try {
@@ -393,19 +419,17 @@ app.get('/publishers', async (req, res) => {
 // ================== ARTICLE ROUTES ================== //
 app.get('/articles/trending', async (req, res) => {
     try {
-        if (!articlesCollection) {
-            return res.status(500).send({ message: "Database not initialized yet" });
-        }
-
         const articles = await articlesCollection.find({ status: 'approved' })
             .sort({ views: -1 })
             .limit(6)
             .toArray();
-        res.send(articles);
+        res.json(articles);
     } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error('Trending articles error:', error);
+        res.status(500).json({ message: error.message });
     }
 });
+
 // Backend route for filtered articles
 app.get('/articles', async (req, res) => {
     try {
@@ -428,31 +452,26 @@ app.get('/articles', async (req, res) => {
         }
 
         const articles = await articlesCollection.find(query).toArray();
-        res.send(articles);
+        res.json(articles);
     } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error('Get articles error:', error);
+        res.status(500).json({ message: error.message });
     }
 });
+
 // Add a new endpoint to get all unique publishers for filter dropdown
 app.get('/articles/publishers', async (req, res) => {
     try {
-        if (!articlesCollection) {
-            return res.status(500).send({ message: "Database not initialized yet" });
-        }
-
         const publishers = await articlesCollection.distinct("publisher", { status: 'approved' });
-        res.send(publishers);
+        res.json(publishers);
     } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error('Get publishers error:', error);
+        res.status(500).json({ message: error.message });
     }
 });
 
 app.get('/tags', async (req, res) => {
     try {
-        if (!articlesCollection) {
-            return res.status(500).send({ message: "Database not initialized yet" });
-        }
-
         const tags = await articlesCollection.distinct("tags", { status: 'approved' });
 
         const normalizedTags = tags
@@ -460,19 +479,20 @@ app.get('/tags', async (req, res) => {
             .flatMap(tag => Array.isArray(tag) ? tag : [tag]);
 
         const uniqueTags = [...new Set(normalizedTags)];
-        res.send(uniqueTags);
+        res.json(uniqueTags);
     } catch (error) {
         console.error("Tags API Error:", error);
-        res.status(500).send({ message: error.message });
+        res.status(500).json({ message: error.message });
     }
 });
+
 // ================== ARTICLE DETAILS ROUTE ================== //
 app.get('/articles/:id', async (req, res) => {
     try {
         const { id } = req.params;
 
         if (!ObjectId.isValid(id)) {
-            return res.status(400).send({ message: "Invalid article ID" });
+            return res.status(400).json({ message: "Invalid article ID" });
         }
 
         const article = await articlesCollection.findOne({
@@ -481,30 +501,31 @@ app.get('/articles/:id', async (req, res) => {
         });
 
         if (!article) {
-            return res.status(404).send({ message: "Article not found" });
+            return res.status(404).json({ message: "Article not found" });
         }
 
-
+        // Increment views
         await articlesCollection.updateOne(
             { _id: new ObjectId(id) },
             { $inc: { views: 1 } }
-        )
+        );
 
-        res.send(article);
+        res.json(article);
 
     } catch (error) {
         console.error('Article details error:', error);
-        res.status(500).send({ message: error.message });
+        res.status(500).json({ message: error.message });
     }
 });
-// articles  add 
+
+// articles add 
 app.post('/articles', verifyFirebaseToken, async (req, res) => {
     try {
         const { title, image, publisher, tags, description } = req.body;
 
         // Validation
         if (!title || !image || !publisher || !tags || !description) {
-            return res.status(400).send({ message: "All fields are required" });
+            return res.status(400).json({ message: "All fields are required" });
         }
 
         const article = {
@@ -523,33 +544,37 @@ app.post('/articles', verifyFirebaseToken, async (req, res) => {
         };
 
         const result = await articlesCollection.insertOne(article);
-        res.status(201).send({
+        res.status(201).json({
             message: "Article submitted successfully! Waiting for admin approval.",
             articleId: result.insertedId
         });
 
     } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error('Add article error:', error);
+        res.status(500).json({ message: error.message });
     }
 });
+
 // Get user's articles with decline reason
 app.get('/my-articles', verifyFirebaseToken, async (req, res) => {
     try {
         const articles = await articlesCollection.find({
             authorId: req.user.uid
         }).sort({ createdAt: -1 }).toArray();
-        res.send(articles)
+        res.json(articles);
     } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error('Get my-articles error:', error);
+        res.status(500).json({ message: error.message });
     }
 });
+
 // Delete article
 app.delete('/article/:id', verifyFirebaseToken, async (req, res) => {
     try {
         const { id } = req.params;
 
         if (!ObjectId.isValid(id)) {
-            return res.status(400).send({ message: "Invalid article ID" });
+            return res.status(400).json({ message: "Invalid article ID" });
         }
 
         const article = await articlesCollection.findOne({
@@ -558,21 +583,23 @@ app.delete('/article/:id', verifyFirebaseToken, async (req, res) => {
         });
 
         if (!article) {
-            return res.status(404).send({ message: "Article not found" });
+            return res.status(404).json({ message: "Article not found" });
         }
 
         // Only allow delete if article is pending or declined
         if (article.status === 'approved') {
-            return res.status(400).send({ message: "Cannot delete approved articles" });
+            return res.status(400).json({ message: "Cannot delete approved articles" });
         }
 
         await articlesCollection.deleteOne({ _id: new ObjectId(id) });
-        res.send({ message: "Article deleted successfully" });
+        res.json({ message: "Article deleted successfully" });
 
     } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error('Delete article error:', error);
+        res.status(500).json({ message: error.message });
     }
 });
+
 // Update article
 app.put('/articles/:id', verifyFirebaseToken, async (req, res) => {
     try {
@@ -580,7 +607,7 @@ app.put('/articles/:id', verifyFirebaseToken, async (req, res) => {
         const { title, description, tags } = req.body;
 
         if (!ObjectId.isValid(id)) {
-            return res.status(400).send({ message: "Invalid article ID" });
+            return res.status(400).json({ message: "Invalid article ID" });
         }
 
         const article = await articlesCollection.findOne({
@@ -589,12 +616,12 @@ app.put('/articles/:id', verifyFirebaseToken, async (req, res) => {
         });
 
         if (!article) {
-            return res.status(404).send({ message: "Article not found" });
+            return res.status(404).json({ message: "Article not found" });
         }
 
         // Only allow update if article is pending or declined
         if (article.status === 'approved') {
-            return res.status(400).send({ message: "Cannot update approved articles" });
+            return res.status(400).json({ message: "Cannot update approved articles" });
         }
 
         const updateData = {
@@ -609,19 +636,21 @@ app.put('/articles/:id', verifyFirebaseToken, async (req, res) => {
             { $set: updateData }
         );
 
-        res.send({ message: "Article updated successfully" });
+        res.json({ message: "Article updated successfully" });
 
     } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error('Update article error:', error);
+        res.status(500).json({ message: error.message });
     }
 });
+
 // Get article by ID (details view)
 app.get('/my-article/:id', verifyFirebaseToken, async (req, res) => {
     try {
         const { id } = req.params;
 
         if (!ObjectId.isValid(id)) {
-            return res.status(400).send({ message: "Invalid article ID" });
+            return res.status(400).json({ message: "Invalid article ID" });
         }
 
         const article = await articlesCollection.findOne({
@@ -630,20 +659,17 @@ app.get('/my-article/:id', verifyFirebaseToken, async (req, res) => {
         });
 
         if (!article) {
-            return res.status(404).send({ message: "Article not found" });
+            return res.status(404).json({ message: "Article not found" });
         }
 
-        res.send(article);
+        res.json(article);
     } catch (error) {
-        res.status(500).send({ message: error.message });
+        console.error('Get my-article error:', error);
+        res.status(500).json({ message: error.message });
     }
 });
+
 // Sample route
 app.get('/', (req, res) => {
-    res.send('Newspaper FullStack Server is running smoothly!');
-});
-
-// Start the server
-app.listen(port, () => {
-    console.log(`Server is up and running on port ${port}`);
+    res.json({ message: 'Newspaper FullStack Server is running smoothly!' });
 });
