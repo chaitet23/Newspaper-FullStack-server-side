@@ -410,7 +410,52 @@ app.patch('/admin/articles/:id/status', verifyFirebaseToken, async (req, res) =>
         res.status(500).json({ message: error.message });
     }
 });
+// ================== PREMIUM ARTICLE TOGGLE ROUTE ================== //
+app.patch('/admin/articles/:id/premium', verifyFirebaseToken, async (req, res) => {
+    try {
+        // Check if requester is admin
+        const requester = await usersCollection.findOne({ uid: req.user.uid });
+        if (!requester || requester.role !== 'admin') {
+            return res.status(403).json({ message: 'Forbidden: Admins only' });
+        }
 
+        const { id } = req.params;
+        const { isPremium } = req.body;
+
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Invalid article ID' });
+        }
+
+        if (typeof isPremium !== 'boolean') {
+            return res.status(400).json({ message: 'isPremium must be a boolean value' });
+        }
+
+        // Check if article exists
+        const article = await articlesCollection.findOne({ _id: new ObjectId(id) });
+        if (!article) {
+            return res.status(404).json({ message: 'Article not found' });
+        }
+
+        // Update premium status
+        const result = await articlesCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { isPremium: isPremium } }
+        );
+
+        if (result.modifiedCount === 1) {
+            res.json({
+                message: `Article ${isPremium ? 'marked as premium' : 'removed from premium'} successfully`,
+                isPremium: isPremium
+            });
+        } else {
+            res.status(404).json({ message: 'Article not found or no changes made' });
+        }
+
+    } catch (error) {
+        console.error('Toggle premium status error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
 // Admin: Delete any article
 app.delete('/admin/articles/:id', verifyFirebaseToken, async (req, res) => {
     try {
