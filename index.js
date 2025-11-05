@@ -8,6 +8,9 @@ const admin = require("firebase-admin");
 dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
+const Stripe = require("stripe");
+const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
 
 // Middleware
 app.use(cors());
@@ -32,7 +35,7 @@ const client = new MongoClient(uri, {
     }
 });
 
-let articlesCollection, usersCollection, publishersCollection;
+let articlesCollection, usersCollection, publishersCollection, plansCollection
 
 // Database connection check middleware
 app.use((req, res, next) => {
@@ -73,6 +76,7 @@ async function run() {
         articlesCollection = db.collection("articles");
         usersCollection = db.collection("users");
         publishersCollection = db.collection("publishers");
+        plansCollection = db.collection("plans");
 
         console.log("Database collections initialized successfully");
 
@@ -83,7 +87,7 @@ async function run() {
 
     } catch (error) {
         console.error("Error connecting to MongoDB:", error);
-        process.exit(1); // Exit process if DB connection fails
+        process.exit(1);
     }
 }
 
@@ -155,46 +159,47 @@ app.get('/users', verifyFirebaseToken, async (req, res) => {
     }
 });
 // ================== SUBSCRIPTION ROUTE ================== //
-app.post('/subscribe', verifyFirebaseToken, async (req, res) => {
-    try {
-        console.log('Subscribe route hit!'); // Debug line
-        const { plan } = req.body;
-        const userEmail = req.user.email;
 
-        console.log('User:', userEmail, 'Plan:', plan);
+// app.post('/subscribe', verifyFirebaseToken, async (req, res) => {
+//     try {
+//         console.log('Subscribe route hit!');
+//         const { plan } = req.body;
+//         const userEmail = req.user.email;
 
-        // Calculate expiry date
-        let expiryDate = new Date();
-        if (plan === '1 minute') {
-            expiryDate.setMinutes(expiryDate.getMinutes() + 1);
-        } else if (plan === '5 days') {
-            expiryDate.setDate(expiryDate.getDate() + 5);
-        } else if (plan === '10 days') {
-            expiryDate.setDate(expiryDate.getDate() + 10);
-        }
+//         console.log('User:', userEmail, 'Plan:', plan);
 
-        // Update user premiumTaken
-        const result = await usersCollection.updateOne(
-            { email: userEmail },
-            { $set: { premiumTaken: expiryDate } }
-        );
+//         // Calculate expiry date
+//         let expiryDate = new Date();
+//         if (plan === '1 minute') {
+//             expiryDate.setMinutes(expiryDate.getMinutes() + 1);
+//         } else if (plan === '5 days') {
+//             expiryDate.setDate(expiryDate.getDate() + 5);
+//         } else if (plan === '10 days') {
+//             expiryDate.setDate(expiryDate.getDate() + 10);
+//         }
 
-        console.log('Update result:', result);
+//         // Update user premiumTaken
+//         const result = await usersCollection.updateOne(
+//             { email: userEmail },
+//             { $set: { premiumTaken: expiryDate } }
+//         );
 
-        if (result.modifiedCount === 0) {
-            return res.status(404).json({ message: 'User not found' });
-        }
+//         console.log('Update result:', result);
 
-        res.json({
-            success: true,
-            message: 'Subscription activated successfully',
-            expiryDate: expiryDate
-        });
-    } catch (error) {
-        console.error('Subscription error:', error);
-        res.status(500).json({ message: error.message });
-    }
-});
+//         if (result.modifiedCount === 0) {
+//             return res.status(404).json({ message: 'User not found' });
+//         }
+
+//         res.json({
+//             success: true,
+//             message: 'Subscription activated successfully',
+//             expiryDate: expiryDate
+//         });
+//     } catch (error) {
+//         console.error('Subscription error:', error);
+//         res.status(500).json({ message: error.message });
+//     }
+// });
 
 // PREMIUM ARTICLES ROUTE
 app.get('/articles/premium', verifyFirebaseToken, async (req, res) => {
@@ -220,6 +225,7 @@ app.get('/articles/premium', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
+
 // Get single user by UID
 app.get('/users/:uid', verifyFirebaseToken, async (req, res) => {
     try {
@@ -805,7 +811,18 @@ app.get('/my-article/:id', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
-
+// plans
+// Fix the plans route - you're missing parentheses
+app.get("/plans", async (req, res) => {
+    try {
+        const result = await plansCollection.find().toArray(); // Added ()
+        res.status(200).json(result);
+    }
+    catch (error) {
+        console.error("Get plans error:", error);
+        res.status(500).json({ message: error.message });
+    }
+});
 // Sample route
 app.get('/', (req, res) => {
     res.json({ message: 'Newspaper FullStack Server is running smoothly!' });
