@@ -158,48 +158,91 @@ app.get('/users', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ message: error.message });
     }
 });
-// ================== SUBSCRIPTION ROUTE ================== //
 
-// app.post('/subscribe', verifyFirebaseToken, async (req, res) => {
-//     try {
-//         console.log('Subscribe route hit!');
-//         const { plan } = req.body;
-//         const userEmail = req.user.email;
 
-//         console.log('User:', userEmail, 'Plan:', plan);
+// ================== STRIPE PAYMENT ROUTES ================== //
 
-//         // Calculate expiry date
-//         let expiryDate = new Date();
-//         if (plan === '1 minute') {
-//             expiryDate.setMinutes(expiryDate.getMinutes() + 1);
-//         } else if (plan === '5 days') {
-//             expiryDate.setDate(expiryDate.getDate() + 5);
-//         } else if (plan === '10 days') {
-//             expiryDate.setDate(expiryDate.getDate() + 10);
-//         }
+// Create Payment Intent
+app.post('/create-payment-intent', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { plan } = req.body;
+        const userEmail = req.user.email;
 
-//         // Update user premiumTaken
-//         const result = await usersCollection.updateOne(
-//             { email: userEmail },
-//             { $set: { premiumTaken: expiryDate } }
-//         );
+        // Plan configuration (amounts in cents)
+        const plans = {
+            '1 minute': { amount: 10 },    // $0.10
+            '5 days': { amount: 500 },     // $5.00  
+            '10 days': { amount: 800 }     // $8.00
+        };
 
-//         console.log('Update result:', result);
+        const selectedPlan = plans[plan];
+        if (!selectedPlan) {
+            return res.status(400).json({ message: 'Invalid plan' });
+        }
 
-//         if (result.modifiedCount === 0) {
-//             return res.status(404).json({ message: 'User not found' });
-//         }
+        // Create PaymentIntent
+        const paymentIntent = await stripe.paymentIntents.create({
+            amount: selectedPlan.amount,
+            currency: 'usd',
+            metadata: {
+                userEmail: userEmail,
+                plan: plan
+            }
+        });
 
-//         res.json({
-//             success: true,
-//             message: 'Subscription activated successfully',
-//             expiryDate: expiryDate
-//         });
-//     } catch (error) {
-//         console.error('Subscription error:', error);
-//         res.status(500).json({ message: error.message });
-//     }
-// });
+        res.json({
+            clientSecret: paymentIntent.client_secret,
+            amount: selectedPlan.amount
+        });
+    } catch (error) {
+        console.error('Payment intent error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Confirm Payment and Activate Premium
+app.post('/confirm-payment', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { paymentIntentId } = req.body;
+        const userEmail = req.user.email;
+
+        // Retrieve payment intent to verify it succeeded
+        const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+        if (paymentIntent.status !== 'succeeded') {
+            return res.status(400).json({ message: 'Payment not successful' });
+        }
+
+        // Get plan from metadata
+        const plan = paymentIntent.metadata.plan;
+
+        // Calculate expiry date
+        let expiryDate = new Date();
+        if (plan === '1 minute') {
+            expiryDate.setMinutes(expiryDate.getMinutes() + 1);
+        } else if (plan === '5 days') {
+            expiryDate.setDate(expiryDate.getDate() + 5);
+        } else if (plan === '10 days') {
+            expiryDate.setDate(expiryDate.getDate() + 10);
+        }
+
+        // Update user premium status
+        await usersCollection.updateOne(
+            { email: userEmail },
+            { $set: { premiumTaken: expiryDate } }
+        );
+
+        res.json({
+            success: true,
+            message: 'Payment confirmed and premium activated!',
+            expiryDate: expiryDate
+        });
+
+    } catch (error) {
+        console.error('Confirm payment error:', error);
+        res.status(500).json({ message: error.message });
+    }
+});
 
 // PREMIUM ARTICLES ROUTE
 app.get('/articles/premium', verifyFirebaseToken, async (req, res) => {
